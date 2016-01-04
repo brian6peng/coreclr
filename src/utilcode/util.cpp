@@ -18,6 +18,7 @@
 #include "loaderheap.h"
 #include "sigparser.h"
 #include "cor.h"
+#include "corinfo.h"
 
 #ifndef FEATURE_CORECLR
 #include "metahost.h"
@@ -525,6 +526,13 @@ BYTE * ClrVirtualAllocExecutable(SIZE_T dwSize,
 
     // Fall through to 
 #endif // USE_UPPER_ADDRESS
+
+#ifdef FEATURE_PAL
+    // Tell PAL to use the executable memory allocator to satisfy this request for virtual memory.
+    // This will allow us to place JIT'ed code close to the coreclr library
+    // and thus improve performance by avoiding jump stubs in managed code.
+    flAllocationType |= MEM_RESERVE_EXECUTABLE;
+#endif // FEATURE_PAL
 
     return (BYTE *) ClrVirtualAlloc (NULL, dwSize, flAllocationType, flProtect);
 
@@ -1295,12 +1303,28 @@ bool ConfigMethodSet::contains(LPCUTF8 methodName, LPCUTF8 className, PCCOR_SIGN
         NOTHROW;
     }
     CONTRACTL_END;
-    
+
     _ASSERTE(m_inited == 1);
 
     if (m_list.IsEmpty())
         return false;
     return(m_list.IsInList(methodName, className, sig));
+}
+
+/**************************************************************************/
+bool ConfigMethodSet::contains(LPCUTF8 methodName, LPCUTF8 className, CORINFO_SIG_INFO* pSigInfo)
+{
+    CONTRACTL
+    {
+        NOTHROW;
+    }
+    CONTRACTL_END;
+
+    _ASSERTE(m_inited == 1);
+
+    if (m_list.IsEmpty())
+        return false;
+    return(m_list.IsInList(methodName, className, pSigInfo));
 }
 
 /**************************************************************************/
@@ -1641,20 +1665,50 @@ bool MethodNamesListBase::IsInList(LPCUTF8 methName, LPCUTF8 clsName, PCCOR_SIGN
         NOTHROW;
     }
     CONTRACTL_END;
-    
-    ULONG numArgs = -1;
+
+    int numArgs = -1;
     if (sig != NULL)
     {
         sig++;      // Skip calling convention
         numArgs = CorSigUncompressData(sig);  
     }
 
+    return IsInList(methName, clsName, numArgs);
+}
+
+/**************************************************************/
+bool MethodNamesListBase::IsInList(LPCUTF8 methName, LPCUTF8 clsName, CORINFO_SIG_INFO* pSigInfo)
+{
+    CONTRACTL
+    {
+        NOTHROW;
+    }
+    CONTRACTL_END;
+
+    int numArgs = -1;
+    if (pSigInfo != NULL)
+    {
+        numArgs = pSigInfo->numArgs;
+    }
+
+    return IsInList(methName, clsName, numArgs);
+}
+
+/**************************************************************/
+bool MethodNamesListBase::IsInList(LPCUTF8 methName, LPCUTF8 clsName, int numArgs) 
+{
+    CONTRACTL
+    {
+        NOTHROW;
+    }
+    CONTRACTL_END;
+
     // Try to match all the entries in the list
 
     for(MethodName * pName = pNames; pName; pName = pName->next)
     {
         // If numArgs is valid, check for mismatch
-        if (pName->numArgs != -1 && (ULONG)pName->numArgs != numArgs)
+        if (pName->numArgs != -1 && pName->numArgs != numArgs)
             continue;
 
         // If methodName is valid, check for mismatch

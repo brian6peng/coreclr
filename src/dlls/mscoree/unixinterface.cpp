@@ -62,7 +62,7 @@ static LPCWSTR StringToUnicode(LPCSTR str)
     LPWSTR result = new (nothrow) WCHAR[length];
     ASSERTE_ALL_BUILDS(result != NULL);
     
-    length = MultiByteToWideChar(CP_ACP, 0, str, length, result, length);
+    length = MultiByteToWideChar(CP_ACP, 0, str, -1, result, length);
     ASSERTE_ALL_BUILDS(length != 0);
 
     return result;
@@ -280,13 +280,15 @@ int coreclr_shutdown(
             unsigned int domainId)
 {
     ReleaseHolder<ICLRRuntimeHost2> host(reinterpret_cast<ICLRRuntimeHost2*>(hostHandle));
-    HRESULT hr = host->UnloadAppDomain(domainId,
-                                       true); // Wait until done
+
+    HRESULT hr = host->UnloadAppDomain(domainId, true); // Wait until done
     IfFailRet(hr);
 
     hr = host->Stop();
 
-    // The PAL_Terminate is not called here since it would terminate the current process.
+#ifdef FEATURE_PAL
+    PAL_Shutdown();
+#endif
 
     return hr;
 }

@@ -14,7 +14,6 @@
 #include "excep.h"
 #include "eeconfig.h"
 #include "gc.h"
-#include "gcenv.h"
 #include "eventtrace.h"
 #ifdef FEATURE_FUSION
 #include "assemblysink.h"
@@ -3693,7 +3692,7 @@ void SystemDomain::ExecuteMainMethod(HMODULE hMod, __in_opt LPWSTR path /*=NULL*
         pDomain->GetMulticoreJitManager().AutoStartProfile(pDomain);
 #endif
 
-        pDomain->m_pRootAssembly->ExecuteMainMethod(NULL);
+        pDomain->m_pRootAssembly->ExecuteMainMethod(NULL, TRUE /* waitForOtherThreads */);
     }
 
     pThread->ReturnToContext(&frame);

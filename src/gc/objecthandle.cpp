@@ -787,7 +787,7 @@ HandleTableBucket *Ref_CreateHandleTableBucket(ADIndex uADIndex)
                         HndSetHandleTableIndex(result->pTable[uCPUindex], i+offset);
 
                     result->HandleTableIndex = i+offset;
-                    if (FastInterlockCompareExchangePointer(&walk->pBuckets[i], result, NULL) == 0) {
+                    if (Interlocked::CompareExchangePointer(&walk->pBuckets[i], result, NULL) == 0) {
                         // Get a free slot.
                         bucketHolder.SuppressRelease();
                         return result;
@@ -812,7 +812,7 @@ HandleTableBucket *Ref_CreateHandleTableBucket(ADIndex uADIndex)
         ZeroMemory(newMap->pBuckets,
                 INITIAL_HANDLE_TABLE_ARRAY_SIZE * sizeof (HandleTableBucket *));
 
-        if (FastInterlockCompareExchangePointer(&last->pNext, newMap.GetValue(), NULL) != NULL) 
+        if (Interlocked::CompareExchangePointer(&last->pNext, newMap.GetValue(), NULL) != NULL) 
         {
             // This thread loses.
             delete [] newMap->pBuckets;
@@ -1218,7 +1218,7 @@ void Ref_TraceRefCountHandles(HANDLESCANPROC callback, uintptr_t lParam1, uintpt
                 {
                     HHANDLETABLE hTable = walk->pBuckets[i]->pTable[j];
                     if (hTable)
-                        HndEnumHandles(hTable, &handleType, 1, callback, lParam1, lParam2, FALSE);
+                        HndEnumHandles(hTable, &handleType, 1, callback, lParam1, lParam2, false);
                 }
             }
         }
@@ -1575,8 +1575,8 @@ void Ref_UpdatePointers(uint32_t condemned, uint32_t maxgen, ScanContext* sc, Re
 
     if (GCHeap::IsServerHeap()) 
     {
-        bDo = (FastInterlockIncrement((LONG*)&uCount) == 1);
-        FastInterlockCompareExchange ((LONG*)&uCount, 0, GCHeap::GetGCHeap()->GetNumberOfHeaps());
+        bDo = (Interlocked::Increment(&uCount) == 1);
+        Interlocked::CompareExchange (&uCount, 0, GCHeap::GetGCHeap()->GetNumberOfHeaps());
         _ASSERTE (uCount <= GCHeap::GetGCHeap()->GetNumberOfHeaps());
     }
 

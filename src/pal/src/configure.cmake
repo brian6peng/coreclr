@@ -9,7 +9,10 @@ include(CheckLibraryExists)
 
 if(CMAKE_SYSTEM_NAME STREQUAL FreeBSD)
   set(CMAKE_REQUIRED_INCLUDES /usr/local/include)
-elseif(NOT CMAKE_SYSTEM_NAME STREQUAL Darwin)
+elseif(CMAKE_SYSTEM_NAME STREQUAL SunOS)
+  set(CMAKE_REQUIRED_INCLUDES /opt/local/include)
+endif()
+if(NOT CMAKE_SYSTEM_NAME STREQUAL Darwin AND NOT CMAKE_SYSTEM_NAME STREQUAL FreeBSD)
   set(CMAKE_REQUIRED_DEFINITIONS "-D_DEFAULT_SOURCE -D_POSIX_C_SOURCE=200809L")
 endif()
 
@@ -43,8 +46,6 @@ check_library_exists(pthread pthread_getattr_np "" HAVE_PTHREAD_GETATTR_NP)
 check_library_exists(pthread pthread_sigqueue "" HAVE_PTHREAD_SIGQUEUE)
 check_function_exists(sigreturn HAVE_SIGRETURN)
 check_function_exists(_thread_sys_sigreturn HAVE__THREAD_SYS_SIGRETURN)
-check_function_exists(setcontext HAVE_SETCONTEXT)
-check_function_exists(getcontext HAVE_GETCONTEXT)
 check_function_exists(copysign HAVE_COPYSIGN)
 check_function_exists(fsync HAVE_FSYNC)
 check_function_exists(futimes HAVE_FUTIMES)
@@ -290,6 +291,19 @@ int main(void)
 
   exit(-1 == max_priority || -1 == min_priority);
 }" HAVE_SCHED_GET_PRIORITY)
+set(CMAKE_REQUIRED_LIBRARIES pthread)
+check_cxx_source_runs("
+#include <stdlib.h>
+#include <sched.h>
+
+int main(void)
+{
+  if (sched_getcpu() >= 0)
+  {
+    exit(0);
+  }
+  exit(1);
+}" HAVE_SCHED_GETCPU)
 set(CMAKE_REQUIRED_LIBRARIES)
 check_cxx_source_runs("
 #include <stdlib.h>
@@ -332,6 +346,19 @@ int main()
 }" HAVE_CLOCK_MONOTONIC)
 check_cxx_source_runs("
 #include <stdlib.h>
+#include <time.h>
+#include <sys/time.h>
+
+int main()
+{
+  int ret;
+  struct timespec ts;
+  ret = clock_gettime(CLOCK_MONOTONIC_COARSE, &ts);
+
+  exit(ret);
+}" HAVE_CLOCK_MONOTONIC_COARSE)
+check_cxx_source_runs("
+#include <stdlib.h>
 #include <mach/mach_time.h>
 
 int main()
@@ -342,6 +369,19 @@ int main()
   mach_absolute_time();
   exit(ret);
 }" HAVE_MACH_ABSOLUTE_TIME)
+check_cxx_source_runs("
+#include <stdlib.h>
+#include <time.h>
+#include <sys/time.h>
+
+int main()
+{
+  int ret;
+  struct timespec ts;
+  ret = clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts);
+
+  exit(ret);
+}" HAVE_CLOCK_THREAD_CPUTIME)
 check_cxx_source_runs("
 #include <stdlib.h>
 #include <sys/types.h>
@@ -904,6 +944,25 @@ elseif(CMAKE_SYSTEM_NAME STREQUAL FreeBSD)
     message(FATAL_ERROR "Cannot find libc on this system.")
   endif()
   
+elseif(CMAKE_SYSTEM_NAME STREQUAL SunOS)
+  if(NOT HAVE_LIBUNWIND_H)
+    unset(HAVE_LIBUNWIND_H CACHE)
+    message(FATAL_ERROR "Cannot find libunwind. Try installing libunwind8 and libunwind8-dev (or the appropriate packages for your platform)")
+  endif()
+  if(NOT HAVE_LIBUUID_H)
+    unset(HAVE_LIBUUID_H CACHE)
+    message(FATAL_ERROR "Cannot find libuuid. Try installing uuid-dev or the appropriate packages for your platform")
+  endif()
+  set(DEADLOCK_WHEN_THREAD_IS_SUSPENDED_WHILE_BLOCKED_ON_MUTEX 0)
+  set(PAL_PTRACE "ptrace((cmd), (pid), (caddr_t)(addr), (data))")
+  set(PAL_PT_ATTACH PT_ATTACH)
+  set(PAL_PT_DETACH PT_DETACH)
+  set(PAL_PT_READ_D PT_READ_D)
+  set(PAL_PT_WRITE_D PT_WRITE_D)
+  set(JA_JP_LOCALE_NAME ja_JP_LOCALE_NOT_FOUND)
+  set(KO_KR_LOCALE_NAME ko_KR_LOCALE_NOT_FOUND)
+  set(ZH_TW_LOCALE_NAME zh_TW_LOCALE_NOT_FOUND)
+  set(HAS_FTRUNCATE_LENGTH_ISSUE 0)
 else() # Anything else is Linux
   if(NOT HAVE_LIBUNWIND_H)
     unset(HAVE_LIBUNWIND_H CACHE)

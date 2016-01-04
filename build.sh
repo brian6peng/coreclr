@@ -3,8 +3,8 @@
 usage()
 {
     echo "Usage: $0 [BuildArch] [BuildType] [clean] [verbose] [coverage] [cross] [clangx.y] [ninja] [skipcoreclr] [skipmscorlib] [skiptests]"
-    echo "BuildArch can be: x64, ARM"
-    echo "BuildType can be: Debug, Release"
+    echo "BuildArch can be: x64, x86, arm, arm64"
+    echo "BuildType can be: Debug, Checked, Release"
     echo "clean - optional argument to force a clean build."
     echo "verbose - optional argument to enable verbose build output."
     echo "coverage - optional argument to enable code coverage build (currently supported only for Linux and OSX)."
@@ -27,6 +27,9 @@ setup_dirs()
     mkdir -p "$__BinDir"
     mkdir -p "$__LogsDir"
     mkdir -p "$__IntermediatesDir"
+    # Ensure there are no stale generated files
+    rm -rf "$__GeneratedIntermediatesDir"
+
 }
 
 # Performs "clean build" type actions (deleting and remaking directories)
@@ -64,10 +67,36 @@ build_coreclr()
         return
     fi
 
+    echo "Laying out dynamically generated files consumed by the build system "
+    python "$__ProjectRoot/src/scripts/genXplatEventing.py" --man "$__ProjectRoot/src/vm/ClrEtwAll.man" --exc "$__ProjectRoot/src/vm/ClrEtwAllMeta.lst" --inc "$__GeneratedIntermediatesDir/inc" --dummy "$__GeneratedIntermediatesDir/inc/etmdummy.h" --testdir "$__GeneratedIntermediatesDir/eventprovider_tests"
+    if  [[ $? != 0 ]]; then
+        exit
+    fi
+
+    #determine the logging system
+    case $__BuildOS in
+        Linux)
+            python "$__ProjectRoot/src/scripts/genXplatLttng.py" --man "$__ProjectRoot/src/vm/ClrEtwAll.man" --intermediate "$__GeneratedIntermediatesDir/"
+            if  [[ $? != 0 ]]; then
+                exit
+            fi
+            ;;
+        *)
+            ;;
+    esac
+
+    export __GeneratedIntermediatesDirPresent="$__IntermediatesDir/Generated" #do not use this variable, it is used below to support incremental build
+    python -c "import sys;sys.path.insert(0,\"$__ProjectRoot/src/scripts\"); from Utilities import *;UpdateDirectory(\"$__GeneratedIntermediatesDirPresent\",\"$__GeneratedIntermediatesDir\")"
+    if  [[ $? != 0 ]]; then
+        exit
+    fi
+
+    # Do not do any more processing from now on:
     # All set to commence the build
 
-    echo "Commencing build of native components for $__BuildOS.$__BuildArch.$__BuildType"
+    export __GeneratedIntermediatesDir="$__GeneratedIntermediatesDirPresent"
     cd "$__IntermediatesDir"
+    echo "Commencing build of native components for $__BuildOS.$__BuildArch.$__BuildType"
 
     generator=""
     buildFile="Makefile"
@@ -168,7 +197,7 @@ build_mscorlib()
     esac
 
     # Invoke MSBuild
-    mono "$__MSBuildPath" /nologo "$__ProjectRoot/build.proj" /verbosity:minimal "/fileloggerparameters:Verbosity=normal;LogFile=$__LogsDir/MSCorLib_$__BuildOS__$__BuildArch__$__BuildType.log" /t:Build /p:__BuildOS=$__BuildOS /p:__BuildArch=$__MSBuildBuildArch /p:__BuildType=$__BuildType /p:__IntermediatesDir=$__IntermediatesDir /p:UseRoslynCompiler=true /p:BuildNugetPackage=false /p:ToolNugetRuntimeId=$_ToolNugetRuntimeId
+    mono "$__MSBuildPath" /nologo "$__ProjectRoot/build.proj" /verbosity:minimal "/fileloggerparameters:Verbosity=normal;LogFile=$__LogsDir/MSCorLib_$__BuildOS__$__BuildArch__$__BuildType.log" /t:Build /p:__BuildOS=$__BuildOS /p:__BuildArch=$__BuildArch /p:__BuildType=$__BuildType /p:__IntermediatesDir=$__IntermediatesDir /p:UseRoslynCompiler=true /p:BuildNugetPackage=false /p:ToolNugetRuntimeId=$_ToolNugetRuntimeId
 
     if [ $? -ne 0 ]; then
         echo "Failed to build mscorlib."
@@ -181,13 +210,41 @@ echo "Commencing CoreCLR Repo build"
 # Argument types supported by this script:
 #
 # Build architecture - valid values are: x64, ARM.
-# Build Type         - valid values are: Debug, Release
+# Build Type         - valid values are: Debug, Checked, Release
 #
 # Set the default arguments for build
 
 # Obtain the location of the bash script to figure out whether the root of the repo is.
 __ProjectRoot="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-__BuildArch=x64
+
+# Use uname to determine what the CPU is.
+CPUName=$(uname -p)
+case $CPUName in
+    i686)
+        echo "Unsupported CPU $CPUName detected, build might not succeed!"
+        __BuildArch=x86
+        ;;
+
+    x86_64)
+        __BuildArch=x64
+        ;;
+
+    armv7l)
+        echo "Unsupported CPU $CPUName detected, build might not succeed!"
+        __BuildArch=arm
+        ;;
+
+    aarch64)
+        echo "Unsupported CPU $CPUName detected, build might not succeed!"
+        __BuildArch=arm64
+        ;;
+
+    *)
+        echo "Unknown CPU $CPUName detected, configuring as if for x64"
+        __BuildArch=x64
+        ;;
+esac
+
 # Use uname to determine what the OS is.
 OSName=$(uname -s)
 case $OSName in
@@ -211,12 +268,15 @@ case $OSName in
         __BuildOS=NetBSD
         ;;
 
+    SunOS)
+        __BuildOS=SunOS
+        ;;
+
     *)
         echo "Unsupported OS $OSName detected, configuring as if for Linux"
         __BuildOS=Linux
         ;;
 esac
-__MSBuildBuildArch=x64
 __BuildType=Debug
 __CodeCoverage=
 __IncludeTests=Include_Tests
@@ -229,12 +289,12 @@ __RootBinDir="$__ProjectDir/bin"
 __LogsDir="$__RootBinDir/Logs"
 __UnprocessedBuildArgs=
 __MSBCleanBuildArgs=
-__UseNinja=false
-__SkipCoreCLR=false
-__SkipMSCorLib=false
-__CleanBuild=false
-__VerboseBuild=false
-__CrossBuild=false
+__UseNinja=0
+__SkipCoreCLR=0
+__SkipMSCorLib=0
+__CleanBuild=0
+__VerboseBuild=0
+__CrossBuild=0
 __ClangMajorVersion=3
 __ClangMinorVersion=5
 __MSBuildPackageId="Microsoft.Build.Mono.Debug"
@@ -250,20 +310,23 @@ for i in "$@"
         usage
         exit 1
         ;;
+        x86)
+        __BuildArch=x86
+        ;;
         x64)
         __BuildArch=x64
-        __MSBuildBuildArch=x64
         ;;
         arm)
         __BuildArch=arm
-        __MSBuildBuildArch=arm
         ;;
         arm64)
         __BuildArch=arm64
-        __MSBuildBuildArch=arm64
         ;;
         debug)
         __BuildType=Debug
+        ;;
+		checked)
+        __BuildType=Checked
         ;;
         release)
         __BuildType=Release
@@ -318,6 +381,7 @@ __ToolsDir="$__RootBinDir/tools"
 __TestWorkingDir="$__RootBinDir/tests/$__BuildOS.$__BuildArch.$__BuildType"
 __IntermediatesDir="$__RootBinDir/obj/$__BuildOS.$__BuildArch.$__BuildType"
 __TestIntermediatesDir="$__RootBinDir/tests/obj/$__BuildOS.$__BuildArch.$__BuildType"
+export __GeneratedIntermediatesDir="$__IntermediatesDir/Generated_latest" # use this variable to locate dynamically generated files, the actual location though will be different
 
 # Specify path to be set for CMAKE_INSTALL_PREFIX.
 # This is where all built CoreClr libraries will copied to.
